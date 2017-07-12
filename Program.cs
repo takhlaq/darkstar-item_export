@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml;
 
@@ -24,7 +25,7 @@ namespace darkstar_item_export
                 string arg = "", val = "";
                 try
                 {
-                    arg = args[i];
+                    arg = args[i].Trim('-');
                     val = args[i + 1];
                     config[arg] = val;
                 }
@@ -37,11 +38,19 @@ namespace darkstar_item_export
             {
                 config["in"] = Environment.CurrentDirectory;
             }
+            if (!config.ContainsKey("dspMod"))
+            {
+                config["dspMod"] = Environment.CurrentDirectory;
+            }
+
+            string dspModifierFile = Path.Combine(Path.GetFullPath(config["dspMod"]), "modifier.h");
             string itemFile = Path.Combine(Path.GetFullPath(config["in"]), "item_general.xml");
             string item2File = Path.Combine(Path.GetFullPath(config["in"]), "item_general2.xml");
             string itemArmorFile = Path.Combine(Path.GetFullPath(config["in"]), "item_armor.xml");
             string itermArmor2File = Path.Combine(Path.GetFullPath(config["in"]), "item_armor2.xml");
             string itemWeaponFile = Path.Combine(Path.GetFullPath(config["in"]), "item_weapon.xml");
+
+            LoadDSPModifiers(dspModifierFile);
 
             if (!ParseFile(itemFile))
             {
@@ -60,40 +69,52 @@ namespace darkstar_item_export
                 
             }
         }
-
-        static Dictionary<string, Modifier> LoadDarkstarModifiers(string fileName)
-        {
-            Dictionary<string, Modifier> modifiers = new Dictionary<string, Modifier>();
-            if (!File.Exists(fileName))
-            {
-                Console.WriteLine("Unable to find modifiers.h! {0}", fileName);
-                return modifiers;
-            }
-
-            var fileLines = File.ReadAllLines(fileName);
-            bool read = false;
-            foreach (var line in fileLines)
-            {
-                if (line.Contains("enum class Mod"))
-                    read = true;
-                else if (line.Contains("};"))
-                    read = false;
-
-                if (read && line.ToList()[0] != '{')
-                {
-
-                }
-            }
-
-            return modifiers;
-        }
-
  
         static List<Modifier> GetModifiersFromDescription(string description)
         {
             List<Modifier> mods = new List<Modifier>();
 
             return mods;
+        }
+
+        static bool LoadDSPModifiers(string fileName)
+        {
+            if (File.Exists(fileName))
+            {
+                var fileStr = File.ReadAllText(fileName);
+                var defStartPos = fileStr.IndexOf(@"enum class Mod");
+
+                if (defStartPos >= 0)
+                {
+                    var defEndPos = fileStr.IndexOf(@"};", defStartPos);
+                    var enumStr = fileStr.Substring(defStartPos, defEndPos - defStartPos);
+                    var enumStrStart = enumStr.IndexOf("{", defStartPos, 1);
+
+                    var regex = new Regex(@"\s+(\w+)\s+=(?:\s+|)(\d+),(?:\s+|)(?:(.*)\n|)", RegexOptions.CultureInvariant);
+
+                    var enumMatches = regex.Matches(enumStr);
+
+                    foreach (Match enumMatch in enumMatches)
+                    {
+                        Modifier mod = new Modifier();
+                        mod.ModifierName = enumMatch.Groups[1].Value;
+                        mod.ModifierId = Convert.ToInt32(enumMatch.Groups[2].Value);
+                        
+                        // find description str matches
+                        if (enumMatch.Groups.Count > 3)
+                        {
+                            var parserNameRegex = new Regex(@".*(?:\s+|)\{(?:\s+|)parserNameMatch\:(?:\s+|)(.*)(?:\s+|)\}");
+                            var parserValueRegex = new Regex(@".*(?:\s+|)\{(?:\s+|)parserValueMatch\:(?:\s+|)(.*)(?:\s+|)\}");
+                            var modConversionRegex = new Regex(@".*(?:\s+|)\{(?:\s+|)modConversion\:(?:\s+|)(.*)(?:\s+|)\}"); // todo: should be something like value/100 or something
+
+                            mod.ModifierValueRegex = parserValueRegex.Matches(enumMatch.Groups[3].Value);
+                            mod.ModifierNameRegex = parserNameRegex.Matches(enumMatch.Groups[3].Value);
+                            mod.ModifierConversion = modConversionRegex.Match(enumMatch.Groups[3].Value);
+                        }
+                    }
+                }
+            }
+            return false;
         }
 
         static bool ParseFile(string fileName)
