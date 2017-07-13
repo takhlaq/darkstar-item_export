@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -15,7 +16,10 @@ namespace darkstar_item_export
         public Dictionary<string, string> Config = new Dictionary<string, string>();
         public Dictionary<string, List<string>> ItemQueries = new Dictionary<string, List<string>>();
         public Dictionary<string, Modifier> DSPModifiers = new Dictionary<string, Modifier>();
-        public char[] AlphaCharacters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz \"".ToCharArray(); 
+        public Dictionary<string, Modifier> DSPLatents = new Dictionary<string, Modifier>();
+        public List<string> LatentSearchStrings = new List<string>();
+
+        public char[] NonNumericCharacters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz \"\'".ToCharArray(); 
         public Parser(string[] args)
         {
             for (var i = 0; i < args.Length; ++i)
@@ -36,49 +40,76 @@ namespace darkstar_item_export
             {
                 Config["in"] = Environment.CurrentDirectory;
             }
-            if (!Config.ContainsKey("dspMod"))
+            if (!Config.ContainsKey("dspSrc"))
             {
-                Config["dspMod"] = Environment.CurrentDirectory;
+                Config["dspSrc"] = Environment.CurrentDirectory;
             }
 
-            string dspModifierFile = Path.Combine(Path.GetFullPath(Config["dspMod"]), "modifier.h");
+            string dspModifierFile = Path.Combine(Path.GetFullPath(Config["dspSrc"]), "modifier.h");
+            string dspLatentsFile = Path.Combine(Path.GetFullPath(Config["dspSrc"]), "latent_effect.h");
             string itemFile = Path.Combine(Path.GetFullPath(Config["in"]), "item_general.xml");
-            string item2File = Path.Combine(Path.GetFullPath(Config["in"]), "item_general2.xml");
             string itemArmorFile = Path.Combine(Path.GetFullPath(Config["in"]), "item_armor.xml");
-            string itemArmor2File = Path.Combine(Path.GetFullPath(Config["in"]), "item_armor2.xml");
             string itemWeaponFile = Path.Combine(Path.GetFullPath(Config["in"]), "item_weapon.xml");
 
+            LoadLatentSearchStrings();
             LoadDSPModifiers(dspModifierFile);
+            LoadDSPModifiers(dspLatentsFile, "enum LATENT", true);
+
             File.WriteAllText("item_mods.sql", "");
+            File.WriteAllText("item_latents.sql", "");
 
-            if (!ParseFile(itemFile))
+            var itemGeneralItems = ParseFile(itemFile);
+            var itemArmorItems = ParseFile(itemArmorFile);
+            var itemWeaponItems = ParseFile(itemWeaponFile);
+
+            // todo: seems the "2" files are just icons and shit
+            // todo: output shit
+            if (itemGeneralItems != null)
             {
 
             }
-            if (!ParseFile(item2File))
-            {
 
+            if (itemArmorItems != null)
+            {
+                WriteItemLatentsAndModifiersQueries(itemArmorItems);
             }
-            if (!ParseFile(itemArmorFile))
-            {
 
-            }
-            if (!ParseFile(itemWeaponFile))
+            if (itemWeaponItems != null)
             {
-
+                WriteItemLatentsAndModifiersQueries(itemWeaponItems);
             }
         }
 
-        List<Modifier> GetModifiersFromDescription(string description)
+        void LoadLatentSearchStrings()
+        {
+            if (File.Exists("../../latent_strings.txt"))
+            {
+                var lines = File.ReadAllLines("../../latent_strings.txt");
+
+                foreach (var line in lines)
+                {
+                    if (line.Length > 0)
+                    {
+                        if (line[0] == '#')
+                            continue;
+
+                        LatentSearchStrings.Add(line);
+                    }
+                }
+            }
+        }
+
+        List<Modifier> GetModifiersFromDescription(string description, Modifier mod = null, bool latents = false, string itemName = "")
         {
             // todo: split at each number + whitespace and filter out latents
             Dictionary<int, Modifier> mods = new Dictionary<int, Modifier>();
             var attributes = Regex.Split(description, @"(?:[\:]|)((?:[\+\- ]|)\d+)(?: |)", RegexOptions.CultureInvariant);
 
+            var list = latents ? DSPLatents : DSPModifiers;
 
-            foreach (var dspModifier in DSPModifiers)
+            foreach (var dspModifier in list)
             {
-                Modifier mod = new Modifier();
+                mod = mod ?? new Modifier();
                 if (dspModifier.Value.ModifierNameRegex.Length > 0)
                 {
                     foreach (var nameStrRegex in dspModifier.Value.ModifierNameRegex)
@@ -88,13 +119,18 @@ namespace darkstar_item_export
 
                         if (nameMatches.Count > 0)
                         {
-                            mod.ModifierName = nameMatches[0].Groups[1].Value;
+                            if (!latents)
+                                mod.ModifierName = nameMatches[0].Groups[1].Value;
+                            else
+                                mod.LatentEffectId = nameMatches[0].Groups[1].Value;
+
                             break;
                         }
                     }
                 }
                 else
                 {
+                    // case sensitive
                     int pos = description.IndexOf(dspModifier.Key);
 
                     if (pos != -1)
@@ -127,24 +163,35 @@ namespace darkstar_item_export
 
                     mod.ModifierId = dspModifier.Value.ModifierId;
                     int defPos = description.IndexOf(mod.ModifierName) + mod.ModifierName.Length;
-                    int defEndPos = description.IndexOfAny(AlphaCharacters, defPos);
+                    int defEndPos = description.IndexOfAny(NonNumericCharacters, defPos);
                     defEndPos = defEndPos == -1 ? description.Length : defEndPos;
                     mod.ModifierValue = description.Substring(defPos, defEndPos - defPos).Replace("\r\n", "").Replace("?", "").Replace(":", "");
                     //Console.WriteLine(mod.ModifierName + " " + mod.ModifierValue);
 
-                    mod.ModifierComment = $" -- {mod.ModifierName}: {mod.ModifierValue} ";
+                    if (itemName != "")
+                        mod.ModifierComment = $" -- {itemName} {mod.ModifierName}: {mod.ModifierValue} ";
+                    else
+                        mod.ModifierComment = $" -- {mod.ModifierName}: {mod.ModifierValue} ";
 
                     for (var i = 0; i + 1 < attributes.Length; ++i)
                     {
                         var modStr = attributes[i];
                         var modVal = attributes[i + 1];
 
-                        if (modStr.Contains("Latent") && modStr.Contains(mod.ModifierName) && modVal.Contains(mod.ModifierValue))
+                        foreach (var latentStr in LatentSearchStrings)
                         {
-                            GetLatentsFromDescription(mod, modStr, modVal);
+                            if (modStr.Contains(latentStr) && modStr.Contains(mod.ModifierName) && modVal.Contains(mod.ModifierValue))
+                            {
+                                GetLatentsFromDescription(mod, modStr, latentStr);
+                            }
                         }
                     }
-                    // todo: mod conversion
+
+                    // convert the value to dsp shit
+                    if (dspModifier.Value.ModifierConversion != "")
+                        mod.ModifierValue = Convert.ToDouble(new DataTable().Compute(dspModifier.Value.ModifierConversion.Replace("val", mod.ModifierValue), null)).ToString();
+
+                    mod.ModifierComment.Replace(Environment.NewLine, "");
                     if (mod.ModifierValue.Length > 0)
                         mods.Add(mod.ModifierId, mod);
                     break;
@@ -156,20 +203,21 @@ namespace darkstar_item_export
             return mods.Values.ToList();
         }
 
-        bool GetLatentsFromDescription(Modifier mod, string latentStr, string valStr)
+        bool GetLatentsFromDescription(Modifier mod, string latentStr, string searchStr)
         {
-            // todo: load dsp latents, match them same as modifiers
             mod.IsLatent = true;
-            mod.LatentEffectName = latentStr;
+            mod.ModifierComment += $"(search string: {latentStr.Replace(Environment.NewLine, "")})";
+            latentStr = latentStr.Replace(searchStr, "");
+            GetModifiersFromDescription(latentStr, mod, true);
             return true;
         }
 
-        bool LoadDSPModifiers(string fileName)
+        bool LoadDSPModifiers(string fileName, string enumStartStr = "", bool isLatent = false)
         {
             if (File.Exists(fileName))
             {
                 var fileStr = File.ReadAllText(fileName);
-                var defStartPos = fileStr.IndexOf(@"enum class Mod");
+                var defStartPos = fileStr.IndexOf(enumStartStr == "" ? "enum class Mod" : enumStartStr);
 
                 if (defStartPos >= 0)
                 {
@@ -201,7 +249,10 @@ namespace darkstar_item_export
 
                         try
                         {
-                            DSPModifiers.Add(mod.ModifierName, mod);
+                            if (!isLatent)
+                                DSPModifiers.Add(mod.ModifierName, mod);
+                            else
+                                DSPLatents.Add(mod.ModifierName, mod);
                         }
                         catch (Exception e)
                         {
@@ -228,95 +279,121 @@ namespace darkstar_item_export
             return retStrs.ToArray();
         }
 
-        bool ParseFile(string fileName)
+        void WriteItemLatentsAndModifiersQueries(Dictionary<ushort, Item> items)
+        {
+            foreach (var item in items.Values)
+            {
+                if (item.Modifiers != null)
+                {
+                    List<string> modLines = new List<string>();
+                    List<string> latentsLines = new List<string>();
+
+                    modLines.Add("--------------------------" + Environment.NewLine + "-- " + item.Name + Environment.NewLine + "--------------------------");
+                    latentsLines.Add("--------------------------" + Environment.NewLine + "-- " + item.Name + Environment.NewLine + "--------------------------");
+
+                    foreach (var mod in item.Modifiers)
+                    {
+                        var queryStr = $"-- INSERT INTO item_latents VALUES ({item.ItemId}, {mod.ModifierId}, {mod.ModifierValue}, {mod.LatentEffectId}, ); " + mod.ModifierComment;
+
+                        if (mod.ModifierValue.Contains("%") || mod.ModifierValue.Contains("~"))
+                        {
+                            queryStr = "-- " + queryStr;
+                        }
+
+                        if (!mod.IsLatent)
+                        {
+                            queryStr = $"INSERT INTO item_mods VALUES ({item.ItemId}, {mod.ModifierId}, {mod.ModifierValue}); " + mod.ModifierComment;
+                            modLines.Add(queryStr);
+                        }
+                        else
+                        {
+                            latentsLines.Add(queryStr);
+                        }
+                    }
+
+                    if (modLines.Count > 1)
+                    {
+                        modLines.Add("");
+                        File.AppendAllLines("item_mods.sql", modLines.ToArray());
+
+                    }
+                    if (latentsLines.Count > 1)
+                    {
+                        latentsLines.Add("");
+                        File.AppendAllLines("item_latents.sql", latentsLines.ToArray());
+                    }
+                }
+            }
+        }
+
+        public void WriteItemGeneralQueries(Dictionary<ushort, Item> items)
+        {
+            foreach (var item in items)
+            {
+
+            }
+        }
+
+        Dictionary<ushort, Item> ParseFile(string fileName)
         {
             if (!File.Exists(fileName))
             {
-                return false;
+                return null;
             }
 
             XmlDocument xml = new XmlDocument();
             xml.Load(fileName);
             Dictionary<ushort, Item> items = new Dictionary<ushort, Item>();
 
-            foreach (XmlNode item in xml.GetElementsByTagName("thing"))
+            foreach (XmlNode thing in xml.GetElementsByTagName("thing"))
             {
-                var Item = new Item();
+                var item = new Item();
                 bool skip = false;
-                foreach (XmlNode child in item.ChildNodes)
+                foreach (XmlNode child in thing.ChildNodes)
                 {
                     string fieldName = child.Attributes.GetNamedItem("name").Value;
 
                     if (fieldName == "id")
                     {
-                        Item.ItemId = ushort.Parse(child.InnerText);
-                        if (skip = items.ContainsKey(Item.ItemId))
+                        item.ItemId = ushort.Parse(child.InnerText);
+                        if (skip = items.ContainsKey(item.ItemId))
                             break;
                     }
                     else if (fieldName == "flags")
-                        Item.Flags = UInt32.Parse(child.InnerText, NumberStyles.AllowHexSpecifier);
+                        item.Flags = UInt32.Parse(child.InnerText, NumberStyles.AllowHexSpecifier);
                     else if (fieldName == "valid-targets")
-                        Item.ValidTargets = (ValidTargets)ulong.Parse(child.InnerText);
+                        item.ValidTargets = (ValidTargets)ulong.Parse(child.InnerText,NumberStyles.AllowHexSpecifier);
                     else if (fieldName == "name")
-                        Item.Name = child.InnerText.Replace(' ', '_').ToLower().Replace("\'", "\\'");
+                        item.Name = child.InnerText.Replace(' ', '_').ToLower().Replace("\'", "\\'");
                     else if (fieldName == "description")
-                        Item.Modifiers = GetModifiersFromDescription(child.InnerText);
+                        item.Modifiers = GetModifiersFromDescription(child.InnerText, null, false, item.Name);
                     else if (fieldName == "level")
-                        Item.Level = byte.Parse(child.InnerText);
+                        item.Level = ushort.Parse(child.InnerText);
                     else if (fieldName == "iLevel")
-                        Item.ItemLevel = byte.Parse(child.InnerText);
+                        item.ItemLevel = ushort.Parse(child.InnerText);
                     else if (fieldName == "slots")
-                        Item.Slots = (EquipSlots)ulong.Parse(child.InnerText);
+                        item.Slots = (EquipSlots)ulong.Parse(child.InnerText);
                     else if (fieldName == "races")
-                        Item.Races = (Races)UInt32.Parse(child.InnerText, NumberStyles.AllowHexSpecifier);
+                        item.Races = (Races)UInt32.Parse(child.InnerText, NumberStyles.AllowHexSpecifier);
                     else if (fieldName == "jobs")
-                        Item.Jobs = child.InnerText;
+                        item.Jobs = child.InnerText;
                     else if (fieldName == "superior-level")
-                        Item.SuperiorLevel = ushort.Parse(child.InnerText);
+                        item.SuperiorLevel = ushort.Parse(child.InnerText);
                     else if (fieldName == "shield-size")
-                        Item.ShieldSize = ushort.Parse(child.InnerText);
+                        item.ShieldSize = ushort.Parse(child.InnerText);
                     else if (fieldName == "max-charges")
-                        Item.MaxCharges = ushort.Parse(child.InnerText);
+                        item.MaxCharges = ushort.Parse(child.InnerText);
                     else if (fieldName == "casting-time")
-                        Item.CastingTime = UInt32.Parse(child.InnerText);
+                        item.CastingTime = UInt32.Parse(child.InnerText);
                     else if (fieldName == "use-delay")
-                        Item.UseDelay = UInt32.Parse(child.InnerText);
+                        item.UseDelay = UInt32.Parse(child.InnerText);
                     else if (fieldName == "reuse-delay")
-                        Item.ReuseDelay = UInt32.Parse(child.InnerText);
-
-
+                        item.ReuseDelay = UInt32.Parse(child.InnerText);
                 }
                 if (!skip)
-                    items.Add(Item.ItemId, Item);
+                    items.Add(item.ItemId, item);
             }
-
-            foreach (var Item in items.Values)
-            {
-                if (Item.Modifiers != null)
-                {
-                    List<string> lines = new List<string>();
-                    foreach (var mod in Item.Modifiers)
-                    {
-                        if (mod.IsLatent)
-                        {
-                            for (var i = 0; i < 5; ++i)
-                                Console.WriteLine("fuck");
-                            Console.WriteLine($"{mod.LatentEffectName} {mod.ModifierComment}");
-                            continue;
-                        }
-                        var queryStr = $"INSERT INTO item_mods VALUES ({Item.ItemId}, {mod.ModifierId}, {mod.ModifierValue});";
-
-                        if (mod.ModifierValue.Contains("%") || mod.ModifierValue.Contains("~"))
-                        {
-                            mod.ModifierValue = mod.ModifierValue.Replace("%", "");
-                            queryStr = "-- " + queryStr;
-                        }
-                        lines.Add(queryStr + mod.ModifierComment);
-                    }
-                    File.AppendAllLines("item_mods.sql", lines.ToArray());
-                }
-            }
-            return false;
+            return items;
         }
     }
     #region defines

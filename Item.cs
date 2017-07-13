@@ -16,8 +16,8 @@ namespace darkstar_item_export
         public byte StackSize;
         public List<Modifier> Modifiers;
         public ValidTargets ValidTargets;
-        public byte Level;
-        public byte ItemLevel;
+        public ushort Level;
+        public ushort ItemLevel;
         public string Jobs;
         public Races Races;
         public EquipSlots Slots;
