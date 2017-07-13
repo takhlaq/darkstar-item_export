@@ -7,14 +7,21 @@ using System.Text.RegularExpressions;
 
 namespace darkstar_item_export
 {
-    internal struct Modifier
+    class Modifier
     {
         public int ModifierId { get; set; }
         public string ModifierName { get; set; }
         public string ModifierValue { get; set; }
-        public MatchCollection ModifierValueRegex { get; set; }
-        public MatchCollection ModifierNameRegex { get; set; }
-        public Match ModifierConversion { get; set; }
+        public string[] ModifierValueRegex { get; set; }
+        public string[] ModifierNameRegex { get; set; }
+        public string ModifierConversion { get; set; }
         public string ErrorString { get; set; }
+        public string ModifierComment { get; set; }
+        public bool IsLatent { get; set; }
+
+        public Modifier()
+        {
+
+        }
     }
 }
