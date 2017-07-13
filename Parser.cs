@@ -304,10 +304,11 @@ namespace darkstar_item_export
 
                         if (!mod.IsLatent)
                         {
+                            queryStr = $"INSERT INTO item_mods VALUES ({item.ItemId}, {mod.ModifierId}, {mod.ModifierValue}); " + mod.ModifierComment;
+
                             if (mod.ModifierValue.Contains("%") || mod.ModifierValue.Contains("~"))
                                 queryStr = "-- fuck: " + queryStr;
 
-                            queryStr = $"INSERT INTO item_mods VALUES ({item.ItemId}, {mod.ModifierId}, {mod.ModifierValue}); " + mod.ModifierComment;
                             modLines.Add(queryStr);
                         }
                         else
