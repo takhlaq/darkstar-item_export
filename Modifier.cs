@@ -17,6 +17,10 @@ namespace darkstar_item_export
         public string ModifierConversion { get; set; }
         public string ErrorString { get; set; }
         public string ModifierComment { get; set; }
+
+        public string LatentEffectId { get; set; }
+        public string LatentEffectName { get; set; }
+
         public bool IsLatent { get; set; }
 
         public Modifier()

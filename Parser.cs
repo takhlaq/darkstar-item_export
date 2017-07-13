@@ -73,6 +73,9 @@ namespace darkstar_item_export
         {
             // todo: split at each number + whitespace and filter out latents
             Dictionary<int, Modifier> mods = new Dictionary<int, Modifier>();
+            var attributes = Regex.Split(description, @"(?:[\:]|)((?:[\+\- ]|)\d+)(?: |)", RegexOptions.CultureInvariant);
+
+
             foreach (var dspModifier in DSPModifiers)
             {
                 Modifier mod = new Modifier();
@@ -109,7 +112,7 @@ namespace darkstar_item_export
                     {
                         var valueStrRegex = "((?:+|-|)\d+)";
                         var valueRegex = new Regex(mod.ModifierName + @"(?:\s+|)(?:\:|)" + valueStrRegex);
-                        var valueMatches = valueRegex.Matches(description);
+                        var valueMatches = valueRegex.Matches(attribute);
 
                         if (valueMatches.Count > 0)
                         {
@@ -121,23 +124,44 @@ namespace darkstar_item_export
                 //else
                 if (mod.ModifierName != null)
                 {
+
                     mod.ModifierId = dspModifier.Value.ModifierId;
                     int defPos = description.IndexOf(mod.ModifierName) + mod.ModifierName.Length;
                     int defEndPos = description.IndexOfAny(AlphaCharacters, defPos);
                     defEndPos = defEndPos == -1 ? description.Length : defEndPos;
-                    mod.ModifierValue = description.Substring(defPos, defEndPos - defPos).Replace("\r\n", "").Replace("?","").Replace(":","");
+                    mod.ModifierValue = description.Substring(defPos, defEndPos - defPos).Replace("\r\n", "").Replace("?", "").Replace(":", "");
                     //Console.WriteLine(mod.ModifierName + " " + mod.ModifierValue);
 
                     mod.ModifierComment = $" -- {mod.ModifierName}: {mod.ModifierValue} ";
 
+                    for (var i = 0; i + 1 < attributes.Length; ++i)
+                    {
+                        var modStr = attributes[i];
+                        var modVal = attributes[i + 1];
+
+                        if (modStr.Contains("Latent") && modStr.Contains(mod.ModifierName) && modVal.Contains(mod.ModifierValue))
+                        {
+                            GetLatentsFromDescription(mod, modStr, modVal);
+                        }
+                    }
                     // todo: mod conversion
                     if (mod.ModifierValue.Length > 0)
                         mods.Add(mod.ModifierId, mod);
+                    break;
                 }
             }
+
             if (mods.Count == 0)
                 Console.WriteLine(description);
             return mods.Values.ToList();
+        }
+
+        bool GetLatentsFromDescription(Modifier mod, string latentStr, string valStr)
+        {
+            // todo: load dsp latents, match them same as modifiers
+            mod.IsLatent = true;
+            mod.LatentEffectName = latentStr;
+            return true;
         }
 
         bool LoadDSPModifiers(string fileName)
@@ -273,9 +297,16 @@ namespace darkstar_item_export
                     List<string> lines = new List<string>();
                     foreach (var mod in Item.Modifiers)
                     {
+                        if (mod.IsLatent)
+                        {
+                            for (var i = 0; i < 5; ++i)
+                                Console.WriteLine("fuck");
+                            Console.WriteLine($"{mod.LatentEffectName} {mod.ModifierComment}");
+                            continue;
+                        }
                         var queryStr = $"INSERT INTO item_mods VALUES ({Item.ItemId}, {mod.ModifierId}, {mod.ModifierValue});";
 
-                        if (mod.ModifierValue.Contains("%"))
+                        if (mod.ModifierValue.Contains("%") || mod.ModifierValue.Contains("~"))
                         {
                             mod.ModifierValue = mod.ModifierValue.Replace("%", "");
                             queryStr = "-- " + queryStr;
