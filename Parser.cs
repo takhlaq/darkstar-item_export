@@ -52,8 +52,10 @@ namespace darkstar_item_export
             string itemWeaponFile = Path.Combine(Path.GetFullPath(Config["in"]), "item_weapon.xml");
 
             LoadLatentSearchStrings();
-            LoadDSPModifiers(dspModifierFile);
-            LoadDSPModifiers(dspLatentsFile, "enum LATENT", true);
+            if (!LoadDSPModifiers(dspModifierFile))
+                throw new Exception("Unable to load DarkStar Project modifier.h file!");
+            if (!LoadDSPModifiers(dspLatentsFile, "enum LATENT", true) && Config.ContainsKey("latents"))
+                throw new Exception("Unable to load DarkStar Project latent_effect.h file!");
 
             File.WriteAllText("item_mods.sql", "");
             File.WriteAllText("item_latents.sql", "");
@@ -82,9 +84,9 @@ namespace darkstar_item_export
 
         void LoadLatentSearchStrings()
         {
-            if (File.Exists("../../latent_strings.txt"))
+            if (File.Exists("../latent_strings.txt"))
             {
-                var lines = File.ReadAllLines("../../latent_strings.txt");
+                var lines = File.ReadAllLines("../latent_strings.txt");
 
                 foreach (var line in lines)
                 {
@@ -102,6 +104,7 @@ namespace darkstar_item_export
         List<Modifier> GetModifiersFromDescription(string description, Modifier mod = null, bool latents = false, string itemName = "")
         {
             // todo: split at each number + whitespace and filter out latents
+            // todo: im retarded, need to substring one LatentSearchString to another and grab those mods separately..
             Dictionary<int, Modifier> mods = new Dictionary<int, Modifier>();
             var attributes = Regex.Split(description, @"(?:[\:]|)((?:[\+\- ]|)\d+)(?: |)", RegexOptions.CultureInvariant);
 
@@ -109,7 +112,7 @@ namespace darkstar_item_export
 
             foreach (var dspModifier in list)
             {
-                mod = mod ?? new Modifier();
+                mod = latents ? mod : new Modifier();
                 if (dspModifier.Value.ModifierNameRegex.Length > 0)
                 {
                     foreach (var nameStrRegex in dspModifier.Value.ModifierNameRegex)
@@ -162,10 +165,12 @@ namespace darkstar_item_export
                 {
 
                     mod.ModifierId = dspModifier.Value.ModifierId;
+
                     int defPos = description.IndexOf(mod.ModifierName) + mod.ModifierName.Length;
                     int defEndPos = description.IndexOfAny(NonNumericCharacters, defPos);
                     defEndPos = defEndPos == -1 ? description.Length : defEndPos;
                     mod.ModifierValue = description.Substring(defPos, defEndPos - defPos).Replace("\r\n", "").Replace("?", "").Replace(":", "");
+
                     //Console.WriteLine(mod.ModifierName + " " + mod.ModifierValue);
 
                     if (itemName != "")
@@ -192,14 +197,15 @@ namespace darkstar_item_export
                         mod.ModifierValue = Convert.ToDouble(new DataTable().Compute(dspModifier.Value.ModifierConversion.Replace("val", mod.ModifierValue), null)).ToString();
 
                     mod.ModifierComment.Replace(Environment.NewLine, "");
-                    if (mod.ModifierValue.Length > 0)
+                    if (mod.ModifierValue.Length > 0 && !mods.ContainsKey(mod.ModifierId))
+                    {
                         mods.Add(mod.ModifierId, mod);
-                    break;
+                    }
                 }
             }
 
-            if (mods.Count == 0)
-                Console.WriteLine(description);
+            //if (mods.Count == 0)
+            //    Console.WriteLine(description);
             return mods.Values.ToList();
         }
 
@@ -260,6 +266,7 @@ namespace darkstar_item_export
                         }
                     }
                 }
+                return isLatent ? DSPLatents.Count != 0 : DSPModifiers.Count != 0;
             }
             return false;
         }
@@ -295,18 +302,19 @@ namespace darkstar_item_export
                     {
                         var queryStr = $"-- INSERT INTO item_latents VALUES ({item.ItemId}, {mod.ModifierId}, {mod.ModifierValue}, {mod.LatentEffectId}, ); " + mod.ModifierComment;
 
-                        if (mod.ModifierValue.Contains("%") || mod.ModifierValue.Contains("~"))
-                        {
-                            queryStr = "-- " + queryStr;
-                        }
-
                         if (!mod.IsLatent)
                         {
+                            if (mod.ModifierValue.Contains("%") || mod.ModifierValue.Contains("~"))
+                                queryStr = "-- fuck: " + queryStr;
+
                             queryStr = $"INSERT INTO item_mods VALUES ({item.ItemId}, {mod.ModifierId}, {mod.ModifierValue}); " + mod.ModifierComment;
                             modLines.Add(queryStr);
                         }
                         else
                         {
+                            if (mod.ModifierValue.Contains("%") || mod.ModifierValue.Contains("~"))
+                                queryStr = "-- fuck: " + queryStr;
+
                             latentsLines.Add(queryStr);
                         }
                     }

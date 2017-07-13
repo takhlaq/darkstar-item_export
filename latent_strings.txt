@@ -1,7 +1,7 @@
 # strings which denote a latent effect
 # (case sensitive)
 
-Assault:
-Latent effect:
-Latent Effect:
-Nighttime:
+Assault
+Latent effect
+Latent Effect
+Nighttime
